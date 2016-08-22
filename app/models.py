@@ -5,9 +5,8 @@ from itsdangerous import TimedJSONWebSignatureSerializer as Serializer
 from markdown import markdown
 import bleach
 from flask import current_app, request, url_for
-from flask.ext.login import UserMixin, AnonymousUserMixin
+from flask_login import UserMixin, AnonymousUserMixin
 from app.exceptions import ValidationError
-import json
 from . import db, login_manager
 
 
@@ -171,7 +170,9 @@ class User(UserMixin, db.Model):
             'url': url_for('api.get_machine', id=self.id, _external=True),
             'username': self.username,
             'member_since': self.member_since,
-            'last_seen': self.last_seen
+            'last_seen': self.last_seen,
+            'machines': url_for('api.get_user_machines', id=self.id, _external=True),
+            'machine_count': self.machines.count()
         }
         return json_user
 
@@ -223,11 +224,33 @@ class Machine(db.Model):
     comments = db.relationship('Comment', backref='machine', lazy='dynamic')
 
     def to_json(self):
-        return NotImplemented
+        json_machine = {
+            'url': url_for('api.get_machine', id=self.id, _external=True),
+            'system_name': self.system_name,
+            'system_notes': self.system_notes,
+            'system_notes_html': self.system_notes_html,
+            'timestamp': self.timestamp,
+            'owner': self.owner,
+            'author': url_for('api.get_user', id=self.author_id, _external=True),
+            'revisions': url_for('api.get_machine_revisions', id=self.id,
+                                 _external=True),
+            'revision_count': self.revisions.count(),
+            'comments': url_for('api.get_machine_comments', id=self.id,
+                                _external=True),
+            'comment_count': self.comments.count()
+        }
+        return json_machine
 
     @staticmethod
     def from_json(json_machine):
-        return NotImplemented
+        system_name = json_machine.get('system_name')
+        if system_name is None or system_name == '':
+            raise ValidationError('machine does not have system_name')
+        system_notes = json_machine.get('system_notes')
+        owner = json_machine.get('owner')
+
+        return Machine(system_name=system_name, system_notes=system_notes,
+                       owner=owner)
 
 
 class Comment(db.Model):
@@ -291,3 +314,47 @@ class Revision(db.Model):
     timestamp = db.Column(db.DateTime, index=True, default=datetime.utcnow)
     author_id = db.Column(db.Integer, db.ForeignKey('users.id'))
     machine_id = db.Column(db.Integer, db.ForeignKey('machines.id'))
+
+    @staticmethod
+    def on_changed_revision_notes(target, value, oldvalue, initiator):
+        allowed_tags = ['a', 'abbr', 'acronym', 'b', 'code', 'em', 'i',
+                        'strong']
+        target.revision_notes_html = bleach.linkify(bleach.clean(
+            markdown(value, output_format='html'),
+            tags=allowed_tags, strip=True))
+
+    def to_json(self):
+        json_revision = {
+            'url': url_for('api.get_revision', id=self.id, _external=True),
+            'machine': url_for('api.get_machine', id=self.machine_id, _external=True),
+            'cpu_make': self.cpu_make,
+            'cpu_name': self.cpu_name,
+            'cpu_socket': self.cpu_socket,
+            'cpu_mhz': self.cpu_mhz,
+            'cpu_proc_cores': self.cpu_proc_cores,
+            'chipset': self.chipset,
+            'system_memory_mb': self.system_memory_mb,
+            'system_memory_mhz': self.system_memory_mhz,
+            'gpu_name': self.gpu_name,
+            'gpu_make': self.gpu_make,
+            'gpu_memory_mb': self.gpu_memory_mb,
+            'revision_notes': self.revision_notes,
+            'revision_notes_html': self.revision_notes_html,
+            'pcpartpicker_url': self.pcpartpicker_url,
+            'timestamp': self.timestamp,
+            'author': url_for('api.get_user', id=self.author_id,
+                              _external=True),
+        }
+        return json_revision
+
+    @staticmethod
+    def from_json(json_revision):
+        cpu_make = json_revision.get('cpu_make')
+        if cpu_make is None or cpu_make == '':
+            raise ValidationError('Revision does not have cpu_make')
+        revision_notes = json_revision.get('revision_notes')
+
+        return Revision(cpu_make=cpu_make, revision_notes=revision_notes)
+
+
+db.event.listen(Revision.revision_notes, 'set', Revision.on_changed_revision_notes)
