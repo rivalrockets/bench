@@ -1,4 +1,4 @@
-from flask import jsonify, request, g, abort, url_for, current_app
+from flask import jsonify, request, g, url_for, current_app
 from .. import db
 from ..models import Machine, Revision, Permission
 from . import api
@@ -9,7 +9,7 @@ from .errors import forbidden
 @api.route('/revisions/')
 def get_revisions():
     page = request.args.get('page', 1, type=int)
-    pagination = Revision.query.paginate(
+    pagination = Revision.query.order_by(Revision.timestamp.desc()).paginate(
         page, per_page=current_app.config['RIVALROCKETS_REVISIONS_PER_PAGE'],
         error_out=False)
     revisions = pagination.items
@@ -58,6 +58,8 @@ def get_machine_revisions(id):
 @api.route('/machines/<int:id>/revisions/', methods=['POST'])
 @permission_required(Permission.CREATE_MACHINE_DATA)
 def new_machine_revision(id):
+    import pdb; pdb.set_trace()
+
     machine = Machine.query.get_or_404(id)
     revision = Revision.from_json(request.json)
     revision.author = g.current_user
